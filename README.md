@@ -4,6 +4,10 @@ This repository contains my assignment code for **S&DS 5630 Multivariate Statist
 
 Course Instructor: **Jonathan Reuning-Scherer**  
 
+## Methods
+
+Methods include PCA, discriminant analysis, MANOVA, cluster analysis (hierarchical clustering, k-means clustering), correspondence analysis (ordination), factor analysis, SEM, etc..
+
 
 ## Disclaimer / References
 
