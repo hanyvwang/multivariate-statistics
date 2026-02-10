@@ -1,4 +1,3 @@
-S&DS 5630 Multivariate Statistics - Assignment Code
 This repository contains my assignment code for S&DS 5630 Multivariate Statistics.
 
 Course Instructor: Jonathan Reuning-Scherer
