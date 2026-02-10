@@ -1,0 +1,347 @@
+---
+title: "PCA — AirPollution dataset"
+author: "Hanyu Wang"
+output: pdf_document
+---
+
+## 0 Packages
+```{r}
+library(readxl)
+library(readxl)
+library(GGally)
+library(car)
+library(heplots)
+```
+
+## 1 Read data
+```{r}
+file_path <- "AirPollution.xls"
+dat <- read_excel(file_path)
+```
+
+```{r}
+# Ensure data are numeric
+dat <- as.data.frame(dat)
+for (j in 1:ncol(dat)) dat[[j]] <- as.numeric(dat[[j]])
+```
+
+```{r}
+# Check data
+cat("n =", nrow(dat), " p =", ncol(dat), "\n")
+summary(dat)
+colSums(is.na(dat))
+```
+
+# 1) First, provide some plots showing relationships between your variables (i.e.scatterplots, etc). Discuss what you see, thinking in particular about high-dimensional linearity. 
+
+```{r}
+library(corrplot)
+corrplot.mixed(cor(dat), lower.col = "black", upper = "ellipse", tl.col = "black", number.cex = .7, order = "hclust", tl.pos = "lt", tl.cex = .7)
+```
+
+```{r}
+#make matrix plot to check for linearity
+plot(dat, pch = 19, cex = .7, col = 'red', main = "Matrix plot of AirPollution raw data")
+
+#Here is a cool way to look for non-linearity, get correlation, make histograms all at once.
+library(PerformanceAnalytics)
+chart.Correlation(dat)
+```
+
+Overall, the variables exhibit a moderate linear correlation structure. Several air pollutant variables (CO, NO, NO2, O3, HC) tend to be positively correlated with one another, while Wind shows negative associations with some pollutant measures. This pattern suggests the presence of one or more underlying linear directions that may explain shared variation among the variables.
+
+From a high-dimensional linearity perspective, the scatterplot matrices do not reveal strong nonlinear patterns such as curved, circular, or multi-modal relationships. Most pairwise relationships can be reasonably approximated as linear. Therefore, from a geometric standpoint, applying PCA to summarize dominant directions of variability is appropriate for this dataset.
+
+# Next, examine the multivariate normality of your data – makeplots as appropriate including a chi-square quantile plot. 
+
+```{r}
+cqplot(dat, main = "AirPollution Data")
+```
+
+In the raw data, most observations align reasonably well with the reference line in the central region, but noticeable deviations occur in the upper tail, indicating departures from strict multivariate normality.
+
+# If you decide to make transformations of variables, make at least some post-transformation plots (including a new chi-square quantile plot) and again discuss linearity and multivariate normality. NOTE that multivariate normality is NOT a requirement for PCA to work!
+
+```{r}
+#start with prcomp
+comp1 <-prcomp(dat)
+summary(comp1)
+
+#Make output variances not standard deviations
+
+summary.PCA.JDRS <- function(x){
+  sum_JDRS <- summary(x)$importance
+  sum_JDRS[1, ] <- sum_JDRS[1, ]^2
+  attr(sum_JDRS, "dimnames")[[1]][1] <- "Eigenvals (Variance)"
+  sum_JDRS
+}
+
+round(summary.PCA.JDRS(comp1), 3)
+
+
+#rotation - same as what we calculated by hand
+round(comp1$rotation, 3)
+
+#get means just FYI
+comp1$center
+
+#get total variance
+sum(comp1$sdev^2)
+
+#confirm this is the same as the total variance of the original variables
+sum(apply(dat, 2, var))
+```
+Show plot of data before and after rotation:
+
+```{r, fig.height = 5, fig.width= 8 }
+#plot data before rotation and include correlation
+plot(dat, pch = 19, asp = 1, col = 'red', main = paste("Unrotated data, correlation = ", round(cor(dat)[1,2],2)))
+abline(h = 3, v = 8)
+
+#plot data after rotation and include correlation
+plot(comp1$x, pch = 19, asp = 1, col = 'red', main = paste("Rotated data, correlation = ", round(cor(comp1$x)[1,2],2)))
+abline(h = 0, v = 0)
+```
+
+Let’s see what happens if we use the princomp() or PCA() functions.
+
+```{r}
+library(FactoMineR)
+
+#use PCA() function
+pc1_a <- PCA(dat, scale.unit = F)
+#NOTE - eigenvalues are DIFFERENT although proportion explained is the same
+summary(pc1_a)
+
+#This means sum of eigenvalues is NOT total variance
+sum(apply(dat, 2, var))
+sum(pc1_a$eig[,1])
+
+names(pc1_a)
+#Make nice output for loadings
+pc1_loads <- data.frame(round(pc1_a$svd$V, 3))
+rownames(pc1_loads) <- colnames(dat)
+colnames(pc1_loads) <- c("PC1", "PC2")
+pc1_loads
+```
+
+Let's now use the `princomp()` function.
+```{r}
+#using princomp
+pc1_b <- princomp(dat, cor = F)
+names(pc1_b)
+summary(pc1_b)
+
+#get loadings
+pc1_b$loadings
+
+#check variance - again, not total variance
+sum(round(pc1_b$sdev^2, 3))
+sum(apply(dat, 2, var))
+```
+
+*NOW* - let's scale variables and see what we get.
+
+```{r}
+#start with prcomp - use the option scale. = T
+comp1 <- prcomp(dat, scale. = T)
+round(summary.PCA.JDRS(comp1), 3)
+
+#rotation - clearly 45 deg
+round(comp1$rotation, 3)
+
+#get total variance
+sum(comp1$sdev^2)
+
+#use PCA() function - default is to scale variables
+pc1_a <- PCA(dat)
+#NOTE - eigenvalues are now SAME
+summary(pc1_a)
+round(pc1_a$svd$V, 3)
+
+
+#use princomp function - use option cor = T
+pc1_b <- princomp(dat, cor = T)
+#now results are the same
+pc1_b$sdev^2
+
+#get loadings
+pc1_b$loadings
+```
+
+```{r}
+str(dat)
+```
+
+
+```{r}
+dattrans <- log(dat)
+dattrans <- dattrans[complete.cases(dattrans),]
+
+#run the function 
+cqplot(dattrans, main = "Transformed AirPollution Data")
+```
+
+Because several variables display skewness and tail deviations from multivariate normality, a log transformation was applied to all variables. After transformation, the scatterplot matrix still shows approximately linear relationships among variables. The chi-square quantile plot for the transformed data appears sightly closer to linearity than that of the raw data, suggesting a little improvement in multivariate normality. The transformed data still do not perfectly follow a multivariate normal distribution.
+
+```{r}
+corrplot.mixed(cor(dattrans), lower.col = "black", upper = "ellipse", tl.col = "black", 
+               number.cex=.7, order = "hclust", tl.pos = "lt", tl.cex=.7, 
+               main="Correlations for Transformed AirPollution Data")
+```
+
+# 2) Examine the correlations among all of your variables. Include your results in table/graph form as you deem appropriate. 
+
+```{r}
+cor(dat)
+```
+
+```{r}
+corrplot.mixed(cor(dat), lower.col = "black", upper = "ellipse", tl.col = "black", number.cex = .7, order = "hclust", tl.pos = "lt", tl.cex = .7)
+```
+
+Based on the correlation matrix and correlation plots, the variables in the AirPollution dataset exhibit a pattern of moderate overall correlation with localized stronger associations. Several pollutant variables (e.g., CO, NO, NO2, O3, and HC) show moderate to relatively strong positive correlations with one another, while Wind tends to be negatively correlated with some pollutant measures. In contrast, Radiation displays weaker correlations with several of the pollutant variables.
+
+# Comment on how well you think PCA will work on your data. 
+
+The correlation structure suggests that the data contain shared variation that PCA can exploit, and at least one principal component is expected to capture a general “overall pollution” or “co-varying pollutant” axis. However, because correlations are not uniformly strong across all variables, PCA is unlikely to achieve very aggressive dimensionality reduction. Instead, multiple principal components will likely be required to explain a large proportion of the total variance, rather than only one or two components accounting for most of the variability.
+
+# In addition, provide a discussion of sample size relative to the number of variables in your dataset.
+
+The dataset consists of 42 observations (n = 42) measured on 7 variables (p = 7), yielding a ratio of approximately n/p $\approx$ 6. According to common empirical guidelines in multivariate analysis, PCA is generally considered acceptable when the sample size is on the order of 4p to 10p. The current sample size falls within this recommended range, suggesting that the estimation of principal components should be reasonably stable. Nevertheless, because the sample size does not reach the most conservative 10p criterion, interpretations of later components (such as PC3, PC4, and beyond) should be made with appropriate caution.
+
+
+# 3) Perform Principal components analysis using the Correlation matrix (standardized variables). Think about how many principal components to retain. To make this decision look at:
+• Total variance explained by a given number of principle components
+• The ‘eigenvalue > 1’ criteria
+• The ‘scree plot elbow’ method (turn in the scree plot)
+• Parallel Analysis: think about whether this is appropriate based on what you discover in question 1.
+
+#####FIRST, use prcomp() on the untransformed data (scaled yes, transformed no)
+
+```{r}
+#scale. = TRUE means run on the correlation matrix, i.e. standardize the variables.
+pc1 <- prcomp(dat, scale. = TRUE)
+```
+
+
+
+```{r}
+pc1_trans <- prcomp(dattrans, scale. = T)
+
+#Here are variances
+round(summary.PCA.JDRS(pc1_trans), 2)
+```
+
+
+```{r}
+#print results - 
+#Here are eigenvalues
+round(summary.PCA.JDRS(pc1),2)
+
+#Get loadings
+round(pc1$rotation,2)
+```
+
+Make a screeplot  
+
+
+```{r}
+screeplot(pc1, type = "lines", col = "red", lwd = 2, pch = 19, cex = 1.2, 
+          main = "Scree Plot of Raw AirPollution Data")
+```
+
+Perform parallel analysis and permutation test analysis.
+
+```{r}
+#get functions for score plots with boundary and PCA threshold analysis.
+source("https://raw.githubusercontent.com/jreuning/sds363_code/refs/heads/main/pcaThreshold.r.txt")
+
+#make the threshold analysis plot using the pcaThreshold function
+pcaThreshold(dat)
+```
+
+
+Make scoreplot with confidence ellipse as well as a biplot.
+
+```{r}
+#  c(1, 2) specifies to use components 1 and 2
+#get function from online
+source("https://raw.githubusercontent.com/jreuning/sds363_code/refs/heads/main/ciscoreplot.r.txt")
+
+#run the function
+ciscoreplot(pc1, c(1, 2), dat[, 1])
+
+#make a biplot for first two components
+biplot(pc1, choices = c(1, 2), pc.biplot = T)
+```
+
+
+First, based on the cumulative proportion of variance explained, the first two principal components account for approximately 53% of the total variance, while the first three components explain about 70%, and the first four components explain roughly 80%. Thus, using a typical heuristic threshold of 70–80% cumulative variance suggests retaining between three and four components.
+
+Second, according to the eigenvalue greater than 1, the first three principal components have eigenvalues exceeding 1, whereas the fourth and subsequent components do not. This criterion therefore supports retaining three principal components.
+
+Third, inspection of the scree plot reveals a clear elbow around the third component, after which the eigenvalues decrease more gradually. This visual criterion is also consistent with retaining three components.
+
+Finally, parallel analysis indicates that only the first principal component clearly exceeds the corresponding threshold across methods, while the second and third components lie close to the threshold. This suggests that the first component is the most statistically robust, whereas later components primarily serve an exploratory and descriptive role. However, parallel analysis is known to be conservative and is most appropriate under approximate multivariate normality. As shown in Question 1, the AirPollution data do not strictly satisfy the multivariate normality assumption, even after transformation. Accordingly, the results of parallel analysis should be interpreted with caution. 
+
+Taking all criteria together, I ultimately chose to retain three principal components for subsequent analysis. The first component captures the dominant and most stable source of variation, while the second and third components represent secondary but still interpretable patterns in the data.
+
+# 4) For principal components you decide to retain, examine the loadings (principalcomponents) and think about an interpretation for each retained component.
+
+```{r}
+pc1_trans <- prcomp(dattrans, scale. = T)
+
+#Here are variances
+round(summary.PCA.JDRS(pc1_trans), 2)
+
+#Get loadings
+round(pc1_trans$rotation, 2)
+
+
+#make a screeplot  
+screeplot(pc1_trans, type = "lines", col = "red", lwd = 2, pch = 19, cex = 1.2, 
+          main = "Scree Plot of Transformed AirPollution Data")
+
+#make the threshold analysis plot
+pcaThreshold(dattrans)
+
+
+
+#make a biplot for first two components
+biplot(pc1_trans, choices = c(1, 2), pc.biplot = T)
+```
+
+PC1 has relatively large positive loadings on several pollutant variables, including CO, NO2, O3, HC, and NO, as well as a positive loading on Radiation, while Wind shows a negative loading. This component represents a pattern in which multiple pollutants increase together, particularly under conditions of lower wind speed when dispersion is limited. Therefore, PC1 can be interpreted as an overall pollution burden or co-varying pollutant axis, capturing the dominant source of variation in air pollution levels.
+
+PC2 is characterized by strong positive loadings on O3 and Radiation, accompanied by a negative loading on NO. This loading pattern reflects a contrast between ozone and nitrogen monoxide under varying radiation conditions, which is consistent with photochemical processes in the atmosphere. As such, PC2 can be interpreted as a photochemical or ozone–nitrogen oxide contrast axis, representing variation driven by solar radiation and related chemical reactions.
+
+PC3 shows relatively large positive loadings on Wind and HC, with negative loadings on some other pollutants such as NO and CO. This component appears to capture a secondary pattern related to meteorological influences, particularly ventilation effects associated with wind speed. Because PC3 explains a smaller proportion of the total variance than PC1 and PC2, its interpretation should be made more cautiously. Nevertheless, it can be viewed as a meteorologically driven secondary modulation axis.
+
+# 5) Make a score plot of the scores for at least one pair of component scores (one and two, one and three, two and three, etc). Discuss any trends/groupings you observe (probably, this will be ‘none’). In addition, make a 95% CI ellipse for two of the retained components. Discuss whether it makes sense to use this as an outlier detection method and describe what you observe. If possible, include a bi-plot as well and discuss what you observe.
+
+```{r}
+Day <- 1:nrow(dat)
+
+#make scoreplot with confidence ellipse : 
+
+#  c(1,2) specifies to use components 1 and 2
+ciscoreplot(pc1_trans, c(1, 2), Day)
+
+#  c(1,3) specifies to use components 1 and 3
+#run the function
+ciscoreplot(pc1_trans, c(1, 3), Day)
+
+#  c(2,3) specifies to use components 2 and 3
+#run the function
+ciscoreplot(pc1_trans, c(2, 3), Day)
+```
+In the score plots of the retained components (PC1–PC2, PC1–PC3, and PC2–PC3), the observations form a largely continuous cloud with no clear evidence of distinct clusters or groupings. The 95% confidence ellipse in the PC1–PC2 plot flags Day 24 and Day 30 as clear outliers (lying outside the ellipse), indicating unusually extreme scores along the dominant variation axis. In the PC1–PC3 plot, Day 24 and Day 30 are again flagged, and Day 33 is additionally identified as an outlier. In the PC2–PC3 plot, Day 24 and Day 33 are again flagged, and Day 37 is additionally identified as an outlier, suggesting these days are unusual with respect to the secondary structure captured by PC2 and PC3.
+
+Using the 95% confidence ellipse as an outlier detection method can be useful for exploratory quality control, but it is not a formal test unless the multivariate normality assumption holds reasonably well. As shown in Question 1, the AirPollution data do not strictly follow a multivariate normal distribution (even after log transformation), so these outliers should be interpreted as potentially unusual days rather than definitive statistical anomalies.
+
+# 6) Write a paragraph summarizing your findings and your opinions about the effectiveness of using PCA on your data. Include evidence based on scatterplots of linearity in higher dimensional space, note any multivariate outliers in your score plot, interpretation of components, etc.
+
+Overall, PCA provides a useful exploratory summary of the AirPollution dataset, but its dimensionality-reduction efficiency is moderate rather than extreme. The scatterplot matrices and correlation results indicate that most pairwise relationships are approximately linear and that several pollutant variables (e.g., CO, NO, NO2, O3, and HC) share moderate positive correlations, while Wind tends to be negatively associated with some pollutant measures. This structure supports the geometric assumptions behind PCA (linear projections capturing major variance directions), and it also implies that at least one dominant “co-varying pollution” axis should exist. Using PCA on the correlation matrix (standardized variables) yields a first component that captures a general pollution burden pattern (multiple pollutants loading in the same direction), with subsequent components reflecting secondary contrast patterns (e.g., a photochemical/radiation–ozone contrast versus nitrogen oxides and other meteorological modulation). However, because correlations are not uniformly high across all variables, PCA does not compress the data into only one or two components without substantial information loss; several components are needed to reach typical cumulative variance thresholds. Score plots with 95% confidence ellipses show no clear clustering of days (consistent with continuous environmental variation), but they do flag a small number of potentially unusual observations—most notably Day 24 and Day 30 in the PC1–PC2 space and Day 33 in the PC2–PC3 space—suggesting days with relatively extreme combinations of pollutant and meteorological conditions. Finally, because the multivariate normality diagnostics in Question 1 suggest departures from strict multivariate normality (even after transformation), the confidence-ellipse “outlier” results should be interpreted as exploratory quality-control signals rather than formal anomaly tests. Taken together, PCA is effective here as a descriptive tool for summarizing dominant patterns and identifying potentially extreme days, but conclusions about later components and outliers should be made cautiously and supported by the underlying variables.
+
+Note: Chatgpt is used for grammar correction.
