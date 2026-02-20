@@ -1,0 +1,568 @@
+---
+title: "Discriminant Analysis - Alzheimer's disease"
+author: "Hanyu Wang"
+output: pdf_document
+---
+
+```{r, include=FALSE}
+library(MASS)
+library(biotools)
+library(klaR)
+library(car)
+library(dplyr)
+library(lubridate)
+library(ggplot2)
+library(ggExtra)
+library(heplots)
+library(readxl)
+library(class)
+```
+
+```{r, include=FALSE}
+file_path <- "alzheim.xls"
+alzheim <- read_excel(file_path)
+```
+
+## Introduction
+
+This study applies Discriminant Analysis (DA) to evaluate whether a battery of memory measures can effectively distinguish among three diagnostic groups: patients with mild Alzheimer’s disease, patients with Depression, and healthy controls. The dataset (`alzeim.xls`), compiled by Michael Friendly (York University) and originally based on research by Robert Hart, examines the discriminatory ability of memory test performance across these groups.
+
+The grouping variable is `group`, and the predictor variables include:
+
+*  `subj`: Subject ID
+  
+*  `trecall`: Total Recall
+  
+*  `hirecall`: High Imagery Recall
+  
+*  `lirecall`: Low Imagery Recall
+  
+*  `tunrem`: Unreminded Memory
+  
+*  `hiunrem`: High Imagery Unreminded Memory
+  
+*  `liunrem`: Low Imagery Unreminded Memory
+  
+*  `store`: Storage
+  
+*  `recog`: Recognition Memory
+
+
+## Data Information
+
+### Exploratory Data Analysis (EDA) plots
+
+This figure presents boxplots of eight memory measures across the three diagnostic groups (mild Alzheimer’s disease, Depression, and controls). Each panel displays the distribution, median, and interquartile range of performance within groups.
+
+```{r, include=FALSE}
+# Common color scheme
+cols <- c("cornsilk2","skyblue","aquamarine3")
+```
+
+```{r fig.width=8, fig.height=8}
+par(mfrow = c(4,2),
+    mar = c(4,4,3,1))
+
+boxplot(trecall ~ group, data=alzheim, col = cols, horizontal = T, 
+        main = "Total recall by Group")
+
+boxplot(hirecall ~ group, data=alzheim, col = cols, horizontal = T, 
+        main = "HI Imagery Recall by Group")
+
+boxplot(lirecall ~ group, data=alzheim, col = cols, horizontal = T, 
+        main = "LO Imagery Recall by Group")
+
+boxplot(tunrem ~ group, data=alzheim, col = cols, horizontal = T, 
+        main = "Unreminded Memory by Group")
+
+boxplot(hiunrem ~ group, data=alzheim, col = cols, horizontal = T, 
+        main = "HI Imagery Unreminded Memory by Group")
+
+boxplot(liunrem ~ group, data=alzheim, col = cols, horizontal = T, 
+        main = "LO Imagery Unreminded Memory by Group")
+
+boxplot(store ~ group, data=alzheim, col = cols, horizontal = T, 
+        main = "Storage by Group")
+
+boxplot(recog ~ group, data=alzheim, col = cols, horizontal = T, 
+        main = "Recognition Memory by Group")
+```
+
+### Correlation Diagnostics (within variables)
+
+To evaluate redundancy among predictors before conducting discriminant analysis, a correlation analysis was performed.
+
+The first table reports the Spearman correlation matrix of the memory variables, offering a global view of their pairwise associations. The second table lists the four variable pairs with the largest absolute correlation coefficients ($|\rho|$), after removing duplicate symmetric entries, thereby identifying the most strongly related predictors.
+
+```{r}
+X <- alzheim[, !names(alzheim) %in% c("subj", "group")]
+
+# 1) Spearman correlation matrix
+cor_mat <- cor(X, use = "pairwise.complete.obs", method = "spearman")
+round(cor_mat, 3)
+
+# 2) list highly correlated pairs
+library(dplyr)
+
+thr <- 0.80
+idx <- which(abs(cor_mat) >= thr, arr.ind = TRUE)
+
+high_pairs <- data.frame(
+  var1 = rownames(cor_mat)[idx[, 1]],
+  var2 = colnames(cor_mat)[idx[, 2]],
+  rho  = cor_mat[idx]
+) %>%
+  filter(var1 != var2) %>%
+  mutate(
+    vmin = pmin(var1, var2),
+    vmax = pmax(var1, var2)
+  ) %>%
+  distinct(vmin, vmax, .keep_all = TRUE) %>%
+  transmute(var1 = vmin, var2 = vmax, rho = rho) %>%
+  arrange(desc(abs(rho)))
+
+high_pairs[1:4, ]
+```
+
+Since `trecall` is the sum of `hirecall` and `lirecall`, including all three variables would introduce exact linear dependence (perfect multicollinearity). In addition, `tunrem` is highly correlated with `hiunrem` and `liunrem`, so retaining all of these unreminded-memory variables would lead to substantial redundancy and potential instability in the discriminant model. Therefore, to reduce multicollinearity and avoid overparameterization, `trecall` and `tunrem` were excluded from subsequent analyses, and the remaining memory measures were used as predictors.
+
+```{r}
+mem_vars <- c("hirecall","lirecall","hiunrem","liunrem","store","recog")
+```
+
+```{r, include=FALSE}
+alzheim <- alzheim[, !names(alzheim) %in% c("trecall", "tunrem")]
+
+alzheim <- alzheim %>%
+  mutate(group = factor(group,
+                        levels = c(1, 2, 3),
+                        labels = c("Mild_AD", "Depression", "Control")))
+table(alzheim$group)
+```
+
+
+## 1. Evaluate the assumptions implicit to Discriminant Analysis
+
+### a. Multivariate normality within each group
+
+The three panels display chi-square quantile plots of squared Mahalanobis distances for each diagnostic group (Mild Alzheimer’s disease, Depression, and Controls). These plots assess whether the predictor variables within each group follow a multivariate normal distribution.
+
+```{r}
+par(mfrow = c(1,3), pty = "s", cex = 0.8)
+
+cqplot(alzheim[alzheim$group == "Mild_AD", mem_vars], 
+       main = "Mild alzheimer's disease")
+
+cqplot(alzheim[alzheim$group == "Depression", mem_vars], 
+       main = "Depression")
+
+cqplot(alzheim[alzheim$group == "Control", mem_vars], 
+       main = "Controls")
+```
+
+Across all three groups, the chi-square Q–Q plots show approximately linear relationships between observed and theoretical quantiles, with most points lying within the confidence envelopes. There is no strong evidence of severe departures from multivariate normality or extreme multivariate outliers.
+
+While the Mild_AD group shows slight tail deviation, the departure is minor and unlikely to substantially affect the performance of Linear Discriminant Analysis.
+
+Thus, the assumption of multivariate normality within groups appears reasonably satisfied for this dataset.
+
+
+
+### b. Similarity of covariances matrices
+
+```{r, include=FALSE}
+#visually compare sample covariance matrices
+print("Covariance Matrix for Mild alzheimer's disease")
+cov(alzheim[alzheim$group == "Mild_AD", mem_vars])
+
+print("Covariance Matrix for Depression")
+cov(alzheim[alzheim$group == "Depression", mem_vars])
+
+print("Covariance Matrix for Controls")
+cov(alzheim[alzheim$group == "Control", mem_vars])
+```
+
+```{r}
+ad_cov <- cov(alzheim[alzheim$group == "Mild_AD", 2:7])
+Depression_cov <- cov(alzheim[alzheim$group == "Depression", 2:7])
+control_cov <- cov(alzheim[alzheim$group == "Control", 2:7])
+
+print("Ratio of Largest to Smallest Covariance Elements (Mild AD vs. Depression)")
+cov_rat <- ad_cov/Depression_cov
+cov_rat[abs(cov_rat) < 1] <- 1/(cov_rat[abs(cov_rat) < 1])
+round(cov_rat, 1)
+
+print("Ratio of Largest to Smallest Covariance Elements (Mild AD vs. Control)")
+cov_rat <- ad_cov/control_cov
+cov_rat[abs(cov_rat) < 1] <- 1/(cov_rat[abs(cov_rat) < 1])
+round(cov_rat, 1)
+
+print("Ratio of Largest to Smallest Covariance Elements (Depression vs. Control)")
+cov_rat <- Depression_cov/control_cov
+cov_rat[abs(cov_rat) < 1] <- 1/(cov_rat[abs(cov_rat) < 1])
+round(cov_rat, 1)
+```
+
+The pairwise comparison of covariance matrices reveals substantial heterogeneity across groups. Several covariance elements differ by factors exceeding 10, and in some cases greater than 50. This suggest that the assumption of equal covariance matrices underlying Linear Discriminant Analysis may be violated.
+
+```{r}
+boxM(alzheim[,mem_vars], alzheim$group)
+```
+Box’s M test indicating significant heterogeneity of covariance matrices across groups, $\chi^2(42) = 142.10$, $p < .001$. Thus, the assumption of equal covariance matrices underlying Linear Discriminant Analysis is violated. This suggests that group-specific variance-covariance structures differ substantially, and classification results from LDA should be interpreted with caution. Quadratic Discriminant Analysis may provide a more flexible alternative.
+
+### c. Data transformation
+
+#### Variable-specific transformations
+
+Variable-specific transformations (square-root for count variables, log for positive continuous measures, and logit transformation for proportion data) were applied to reduce skewness and stabilize variances.
+
+```{r, include=FALSE}
+summary(alzheim[, mem_vars])
+sapply(alzheim[, mem_vars], function(x) c(min=min(x, na.rm=TRUE), max=max(x, na.rm=TRUE)))
+
+logit01 <- function(x){
+  # x should be in [0,1]
+  n <- sum(!is.na(x))
+  x2 <- (x * (n - 1) + 0.5) / n  # squeeze into (0,1)
+  log(x2 / (1 - x2))
+}
+```
+
+```{r}
+alz_t <- alzheim %>%
+  mutate(
+    hirecall_t = sqrt(hirecall),
+    lirecall_t = sqrt(lirecall),
+    recog_t    = sqrt(recog),
+
+    store_t    = log(store + 0.01),
+
+    hiunrem_t  = logit01(hiunrem),
+    liunrem_t  = logit01(liunrem)
+  )
+
+mem_vars_t <- c("hirecall_t","lirecall_t","hiunrem_t","liunrem_t","store_t","recog_t")
+
+alz_X <- as.data.frame(alz_t[, mem_vars_t]) %>%
+  mutate(across(everything(), ~ as.numeric(scale(.x)))) %>%
+  as.matrix()
+
+alz_y <- alz_t$group
+```
+
+```{r}
+par(mfrow = c(1,3), pty = "s", cex = 0.8)
+cqplot(alz_X[alz_y == "Mild_AD", ], main = "Mild_AD (transformed)")
+cqplot(alz_X[alz_y == "Depression", ], main = "Depression (transformed)")
+cqplot(alz_X[alz_y == "Control", ], main = "Control (transformed)")
+
+boxM(alz_X, alz_y)
+```
+
+Post-transformation chi-square Q–Q plots indicating no improvement to multivariate normality within groups. Box’s M test remained highly significant, indicating persistent heterogeneity in covariance matrices. Thus, the homogeneity assumption required for LDA remains violated.
+
+#### Log transformation
+
+A log transformation was applied to recall and recognition measures to further reduce skewness.
+
+```{r}
+alz_t2 <- alzheim %>%
+  mutate(
+    hirecall_t = log(hirecall + 1),
+    lirecall_t = log(lirecall + 1),
+    recog_t    = log(recog + 1),
+    store_t    = log(store + 0.01),
+    hiunrem_t  = logit01(hiunrem),
+    liunrem_t  = logit01(liunrem)
+  )
+
+mem_vars_t2 <- c("hirecall_t","lirecall_t","hiunrem_t","liunrem_t","store_t","recog_t")
+
+alz_X2 <- as.data.frame(alz_t2[, mem_vars_t]) %>%
+  mutate(across(everything(), ~ as.numeric(scale(.x)))) %>%
+  as.matrix()
+
+alz_y2 <- alz_t2$group
+```
+
+```{r}
+par(mfrow = c(1,3), pty = "s", cex = 0.8)
+cqplot(alz_X2[alz_y2 == "Mild_AD", ], main = "Mild_AD (transformed)")
+cqplot(alz_X2[alz_y2 == "Depression", ], main = "Depression (transformed)")
+cqplot(alz_X2[alz_y2 == "Control", ], main = "Control (transformed)")
+
+boxM(alz_X2, alz_y2)
+```
+
+Multivariate normality has no improvement, and Box’s M test remained highly significant, indicating persistent heterogeneity of covariance matrices across groups. This suggests that the inequality of covariance structures reflects genuine group differences rather than distributional skewness. Therefore, Quadratic Discriminant Analysis may provide a more appropriate modeling approach than LDA.
+
+Although transformations were explored, they did not help the data to meet the assumptions of Discriminant Analysis. Therefore, transformations were not retained, and subsequent analyses used standardized raw predictors with QDA.
+
+
+### d. Visualize the potential power of DA.
+
+
+```{r}
+scatterplot(hirecall ~ lirecall, data = alzheim, groups = alzheim$group, 
+            smooth = F, regLine = F, ellipse = T)
+
+scatterplot(hiunrem ~ liunrem, data = alzheim, groups = alzheim$group, 
+            smooth = F, regLine = F, ellipse = T)
+```
+
+```{r}
+plot1 <- ggplot(alzheim, aes(hirecall, lirecall, colour = group)) + geom_point() +
+  labs(title = "High and Low Imagery Recall Performance\n
+       with Marginal Density Distributions by Group")
+ggMarginal(plot1, groupColour = TRUE, groupFill = TRUE)
+```
+
+
+```{r}
+plot2 <- ggplot(alzheim, aes(hiunrem, liunrem, colour = group)) + geom_point() +
+  labs(title = "High and Low Imagery Unreminded Memory Performance\n
+       with Marginal Density Distributions by Group")
+ggMarginal(plot2, groupColour = TRUE, groupFill = TRUE)
+```
+The plots demonstrate substantial separation among the three diagnostic groups.
+
+
+## 2. Perform discriminant analysis
+
+Preliminary assumption testing indicated significant heterogeneity of covariance matrices across the three diagnostic groups. Therefore, the homogeneity assumption required for Linear Discriminant Analysis (LDA) is violated. Under such conditions, Quadratic Discriminant Analysis (QDA), which allows group-specific covariance matrices, is theoretically more appropriate.
+
+### a. Quadratic DA (i.e. assume UNEQUAL covariance matrices)
+
+```{r}
+# run quadratic discriminant analysis
+# We don't get coefficients in this case because we're doing a quadratic partition of space  
+# Also, note this is NOT using equal priors.
+
+alzheimQ.disc <- qda(alzheim[,2:7], grouping = alzheim$group)
+
+# raw results - more accurate than using linear DA
+ctrawQ <- table(alzheim$group, predict(alzheimQ.disc)$class)
+ctrawQ
+
+# total percent correct
+round(sum(diag(prop.table(ctrawQ))),2)
+
+#cross validated results - better than CV for linear DA
+alzheim.discCVQ <- qda(alzheim[,2:7], grouping = alzheim$group, CV = TRUE)
+ctCVQ <- table(alzheim$group, alzheim.discCVQ$class)
+ctCVQ
+
+# total percent correct
+round(sum(diag(prop.table(ctCVQ))),2)
+```
+
+Using all six predictors, QDA achieved an apparent classification accuracy of 93%. All Control subjects were correctly classified. Most misclassifications occurred happen in Depression and Mild_AD groups.
+
+However, under leave-one-out cross-validation (LOOCV), overall classification accuracy decreased to approximately 69%. Most classification errors occurred between Depression and Control groups. The 24% drop in accuracy (93% $\rightarrow$ 69%) indicates substantial optimism bias in resubstitution estimates, suggesting overfitting in the full QDA model.
+
+### b. Stepwise DA (both linear and quadratic)
+
+```{r, include=FALSE}
+alzheim_df <- as.data.frame(alzheim)
+alzheim_df$group <- as.factor(alzheim_df$group)
+```
+
+```{r}
+#STEPWISE DA
+par(mfrow = c(1, 1))
+
+#Just FYI, run line below several times - the results can CHANGE because of nfold validation
+(step1 <- stepclass(group ~ hirecall + lirecall + hiunrem + liunrem + store + recog, 
+                    data = alzheim_df, method = "lda", direction = "both"))
+
+#Here is leave-one out classificating which is relatively stable - keeps only hirecall 
+(step1 <- stepclass(group ~ hirecall + lirecall + hiunrem + liunrem + store + recog, 
+                    data = alzheim_df, method = "lda", direction = "both", 
+                    fold = nrow(alzheim_df)))
+names(step1)
+step1$result.pm
+
+#Do stepwise quadratic DA - keeps only hiunrem 
+(step3 <- stepclass(group ~ hirecall + lirecall + hiunrem + liunrem + store + recog, 
+                    data = alzheim_df, method = "qda", direction = 'both', 
+                    fold = nrow(alzheim_df)))
+```
+
+Stepwise LDA selected only one significant predictor: `hirecall`. The LOOCV classification accuracy was approximately 71%. This suggests that overall recall ability alone captures much of the linear separation among groups.
+
+Stepwise QDA selected `hiunrem` as the sole discriminating variable, yielding a LOOCV classification accuracy of approximately 73%, which is higher than that of the full QDA model. This indicates that high unreminded memory performance provides strong nonlinear discriminatory power.
+
+Although QDA provides better theoretical justification due to unequal covariance structures, model complexity must be balanced against generalization performance. The full QDA model achieves high apparent accuracy but suffers from substantial cross-validation decline. In contrast, stepwise QDA achieves higher LOOCV accuracy with a simpler structure.
+
+```{r}
+# plot results in space spanned by choosen variables
+# First, linear DA with hirecall and hiunrem - linear partition of space
+partimat(alzheim$group ~ hirecall + hiunrem, data = alzheim, method = "lda")
+
+# Second, QDA - quadratic partition of space
+partimat(alzheim$group ~ hirecall + hiunrem, data = alzheim, method = "qda")
+
+# Note that if more than two variables, it does all pairs of variables
+# hirecall and hiunrem seem to work well
+partimat(alzheim$group ~ hirecall + lirecall + hiunrem + liunrem + store + recog, 
+         data = alzheim, method = "qda")
+```
+
+The `partimat()` function visualizes the decision boundaries in the two-dimensional space spanned by selected variables. For LDA, the boundaries are linear, yielding an apparent error rate of 0.267 in the (`hirecall`, `hiunrem`) space. In contrast, QDA produces curved (quadratic) boundaries and reduces the apparent error rate to 0.133, reflecting better fit under unequal covariance structures. When all variables are included, `partimat()` displays pairwise 2D partitions; among them, the `hirecall`–`hiunrem` pair shows one of the lowest error rates, confirming its strong discriminating power.
+
+Considering the violation of covariance homogeneity and cross-validation performance, the stepwise QDA model using hiunrem provides the best balance between theoretical appropriateness, predictive accuracy, and model parsimony. It achieves the highest LOOCV accuracy (0.733) while avoiding overfitting observed in the full QDA model.
+
+Therefore, stepwise QDA is selected as the final model.
+
+
+## 3. Multivariate Wilk’s Lambda test
+
+```{r}
+(alzheim.disc <- lda(alzheim[, 2:7], grouping = alzheim$group, 
+                     prior = c(1/3, 1/3, 1/3)))
+alzheim.manova <- manova(as.matrix(alzheim[, 2:7]) ~ alzheim$group)
+summary.manova(alzheim.manova, test = "Wilks")
+summary.aov(alzheim.manova)
+```
+
+A one-way MANOVA using the six memory measures as outcomes provided strong evidence that the multivariate mean vectors differ across diagnostic groups ($Wilks’~\lambda = 0.2048$, $F(12, 74) = 7.46$, $p = 8.53 \times 10^{-9})$. Follow-up univariate ANOVAs indicated significant group effects for each measure (all $p < 0.001$), suggesting that group separation is not driven by a single outcome alone.
+
+Although Box’s M indicated heterogeneous covariance matrices, the multivariate group effect remained highly significant, and the pattern was consistent across univariate outcomes.
+
+
+## 4. Significancy and discriminating power of the discriminant functions
+
+```{r}
+#Test of significance of resulting discriminant functions
+source("https://raw.githubusercontent.com/jreuning/sds363_code/refs/heads/main/discrim.r.txt")
+
+#Two inputs required - dataframe with discriminating variables and vector with group membership
+discriminant.significance(alzheim_df[, c("hirecall", "hiunrem")], alzheim_df$group)
+```
+
+With three groups and two predictors, at most two discriminant functions can be extracted ($min(p,~g-1)=min(2,~2)=2$). Sequential tests based on Wilks’ lambda show that the set of functions is significant overall ($\lambda = 0.2684$, $F = 19.07$, $p < 0.001$), but the second function is not significant after accounting for the first ($\lambda = 0.9786$, $F = 0.92$, $p = 0.343$). Thus, only the first discriminant function is statistically significant, and it carries essentially all discriminating power; the second contributes little additional separation.
+
+
+## 5. Discriminating ability of the functions
+
+```{r}
+# raw results - more accurate than using linear DA
+ctrawQ <- table(alzheim$group, predict(alzheimQ.disc)$class)
+ctrawQ
+
+# total percent correct
+round(sum(diag(prop.table(ctrawQ))),2)
+
+#cross validated results - better than CV for linear DA
+alzheim.discCVQ <- qda(alzheim[,2:7], grouping = alzheim$group, CV = TRUE)
+ctCVQ <- table(alzheim$group, alzheim.discCVQ$class)
+ctCVQ
+
+# total percent correct
+round(sum(diag(prop.table(ctCVQ))),2)
+```
+
+Both apparent (training-set) classification and leave-one-out cross-validation are used to evaluate the discriminating ability. Apparent classification accuracy was high (0.93), but this estimate is optimistic because it is evaluated on the same data used to fit the model. Leave-one-out cross-validation provided a more realistic estimate of generalization performance, yielding an accuracy of 0.69. Most misclassifications occurred between the Depression and Control groups, indicating overlap in their multivariate profiles.
+
+
+## 6. "Best" discriminators
+
+```{r}
+print("Raw (Unstandardized) Coefficients")
+round(alzheim.disc$scaling, 2)
+
+print("Normalized Coefficients")
+round(alzheim.disc$scaling/sqrt(sum(alzheim.disc$scaling^2)), 2)
+
+#Standardized coefficients we have to scale variables first
+print("Standardized Coefficients")
+round(lda(alzheim$group ~ scale(alzheim[,2:7]), prior = c(1/3, 1/3, 1/3))$scaling, 2)
+```
+
+Based on standardized discriminant coefficients, `hiunrem` is the strongest discriminator on the primary discriminant function (`LD1` coefficient = 0.77), followed by `liunrem` (0.41), `recog` (0.38), `store` (0.32), and `hirecall` (0.30). `lirecall` contributes negligibly to `LD1` (0.02), indicating limited discriminating value. Since `LD1` accounts for the vast majority of discriminatory information ($\approx96\%$ of the trace), these LD1 coefficients provide the strongest evidence for identifying the best discriminators.
+
+## 7. Score plots
+
+```{r}
+#SCORE PLOTS for linear DA
+alzheimlda <- lda(scale(alzheim[, 2:7]), grouping = alzheim$group)
+
+#Calculate scores
+scores <- as.matrix(scale(alzheim[, 2:7]))%*%matrix(alzheimlda$scaling, ncol = 2)
+
+#NOTE - if use cross-validation option, scores are calculated automatically
+plot(scores[,1], scores[,2], type = "n", main = "Linear DCA scores for alzheim data",
+     xlab = "DCA Axis 1", ylab = "DCA Axis 2")
+
+alzheimnames <- names(summary(alzheim$group))
+
+for (i in 1:3){
+  points(scores[alzheim$group == alzheimnames[i], 1],
+         scores[alzheim$group == alzheimnames[i], 2],
+         col = i+1, pch = 15+i, cex = 1.1)
+}
+legend("bottomright", legend = alzheimnames, col = c(2:4), pch = c(15, 16, 17))
+```
+
+The LD1–LD2 score plot shows that separation is driven primarily by LD1: Mild_AD subjects cluster on the negative side of LD1, while controls cluster on the positive side, with depression cases largely intermediate and overlapping with controls. LD2 provides relatively little additional separation, as the groups still overlap substantially along this axis. Consistent with this geometry, misclassification is expected mainly between Depression and Control rather than between Mild_AD and the other groups. Because these are linear discriminant function scores, this visualization is appropriate for LDA (but not QDA, which does not define a single linear score space).
+
+
+## 8. Partition plots
+
+```{r}
+# plot results in space spanned by chosen variables
+# First, linear DA with hirecall and hiunrem - linear partition of space
+partimat(alzheim$group ~ hirecall + hiunrem, data = alzheim, method = "lda")
+
+# Second, QDA - quadratic partition of space
+partimat(alzheim$group ~ hirecall + hiunrem, data = alzheim, method = "qda")
+```
+
+Partition plots in the (`hiunrem`, `hirecall`) space show how the decision regions differ under LDA versus QDA. In both models, separation is driven largely by `hiunrem`, with Mild_AD occupying the low-`hiunrem` region and controls concentrated at higher `hiunrem` and `hirecall` values. Depression cases lie primarily between these extremes and overlap with controls, indicating that Depression–Control separation is the most challenging. Compared with LDA, QDA produces curved, band-like decision regions that better match the observed scatter and reduces the apparent error rate (0.133 vs 0.267). However, this improvement is based on apparent (training-set) performance; cross-validation is needed to assess generalization.
+
+
+## 9. K-nearest neighbors
+
+
+```{r}
+X <- scale(alzheim[, c("hiunrem", "hirecall")])
+y <- alzheim$group
+
+knn_pred <- knn(train = X, test = X, cl = y, k = 5)
+
+table(True = y, Pred = knn_pred)
+
+mean(knn_pred == y)
+```
+
+```{r}
+x1 <- seq(min(X[,1]), max(X[,1]), length=200)
+x2 <- seq(min(X[,2]), max(X[,2]), length=200)
+grid <- expand.grid(x1, x2)
+
+grid_pred <- knn(train=X,
+                 test=as.matrix(grid),
+                 cl=y,
+                 k=5)
+
+z <- matrix(as.numeric(grid_pred),
+            nrow=200, ncol=200)
+
+image(x1, x2, z,
+      col=cols,
+      xlab="hiunrem (scaled)",
+      ylab="hirecall (scaled)",
+      main="kNN Decision Regions")
+
+points(X[,1], X[,2],
+       pch=19,
+       col=as.numeric(y)+1)
+```
+
+As a nonparametric alternative to LDA/QDA, k-nearest neighbors (kNN) was applied in the (`hiunrem`, `hirecall`) space. The resulting decision-region plot shows nonlinear, locally adaptive boundaries. Mild_AD subjects occupy a distinct low-hiunrem region and are classified perfectly (15/15). Most errors occur between Depression and Control (Depression $\rightarrow$ Control = 4; Control $\rightarrow$ Depression = 3), consistent with their overlap in the mid-to-high `hiunrem` range. Overall accuracy was 0.80, suggesting that flexible, assumption-free classifiers can perform well and highlight the same “hard boundary” between Depression and Control observed in parametric DA.
+
+
+*Note*: `ChatGPT` is used for grammar correction.
+
+
+
