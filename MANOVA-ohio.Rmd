@@ -1,0 +1,381 @@
+---
+title: "MANOVA-ohio"
+author: "Hanyu Wang"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(MASS)
+library(biotools)
+library(heplots)
+library(klaR)
+library(PerformanceAnalytics)
+library(car)
+library(vegan)
+library(readxl)
+```
+
+```{r, include=FALSE}
+# get data
+ohiocrimehm <- read_xls('ohiocrimehm.xls')
+```
+
+
+## Introduction
+
+`OHIOCRIMEHM` contains information on attitudes toward crime and criminals obtained in 1995 in a central Ohio survey. 
+
+*DEPENDENT VARIABLES* (measured on a 1-7 scale, 1=strongly disagree, 7=strongly agree)
+
+*   `V10` During the summer, the state government should help provide jobs for inner-city youths from poor families.
+
+*   `V12` Develop recreation programs, like midnight basketball, so that youths will have something to do instead of
+wandering the streets at night.
+
+*   `V16` Instead of arresting people who use drugs, get them into treatment programs that can help get them off drugs.
+
+*   `V23` Provide help to families and their children as soon as a child shows signs that he or she might later get into trouble
+with the law.
+
+
+*INDEPENDENT VARIABLES (CONTINOUS)*
+
+*  `V64` It is important to hate the sin but love the sinner (measured on 7 point scale)
+
+*  `V67` I would describe myself as very religious (measured on 7 point scale)
+
+*  `V86` How would you rate your own political views (scale is 1 to 9, 1 (extremely liberal), 5 (moderate) and 9 (extremely conservative) )
+
+*  `V87` Income (1 -6 scale, 1=less than $15,000, 6 =$75,000 or more)
+
+*INDEPENDENT VARIABLES (CATEGORICAL)*
+
+*  `V70` Gender (0=female, 1=male)
+
+*  `V71` Race (1=white, 2=black, 3=other)
+
+*  `V72` Education (1 = never went to high school, 2 = went to high school but did not graduate, 3 = graduated from high school, 4 = finished one year of college (or post-high school training), 5 = finished two years of college, 6 = finished three years of college, 7 = graduated from college, 8 = finished one or more years of graduate school)
+
+*  `V73` In the last 12 months, has someone broken into your house? (1=yes, 2=no)
+
+```{r, include=FALSE}
+# make better names
+names(ohiocrimehm) <- c("JobProv", "Recreation", "TreaAgree", "HelpAgree", 
+                        "SinView", "ReliLevel", "Gender", "Race", 
+                        "Educ", "Safety", "PolView", "income")
+```
+
+```{r, include=FALSE}
+# Race -> factor with labels
+ohiocrimehm$RaceF <- factor(
+  ohiocrimehm$Race,
+  levels = c(1, 2, 3),
+  labels = c("White", "Black", "Other")
+)
+
+# PolView -> binned factor (3 bins)
+ohiocrimehm$PolIdeology <- cut(
+  ohiocrimehm$PolView,
+  breaks = c(-Inf, 3, 6, Inf),
+  labels = c("Liberal", "Moderate", "Conservative")
+)
+
+ohiocrimehm$PolIdeology <- factor(
+  ohiocrimehm$PolIdeology,
+  levels = c("Liberal", "Moderate", "Conservative")
+)
+```
+
+
+## 1. Interaction Plots for Categorical Factors
+
+For two categorical factors (`Race` $\times$ `Political ideology`), make interaction plots for each of the response variables.
+
+```{r, include=FALSE}
+# Keep only complete cases needed for plots
+vars_needed <- c("JobProv", "Recreation", "TreaAgree", 
+                 "HelpAgree", "RaceF", "PolIdeology")
+dat <- ohiocrimehm[complete.cases(ohiocrimehm[, vars_needed]), vars_needed]
+```
+
+```{r}
+par(mfrow = c(2,2), mar = c(3,3,2,1), cex.main = 0.9, cex.lab = 0.8, cex.axis = 0.8)
+
+interaction.plot(dat$PolIdeology, dat$RaceF, dat$JobProv,
+  lwd = 3, col = c("red", "blue", "black"), trace.label = "Race",
+  xlab = "Political ideology (binned)", ylab = "Mean agreement (1-7)",
+  main = "Jobs for inner-city youths (JobProv)", legend = FALSE
+)
+
+legend("topright", legend = levels(dat$RaceF),
+       col = c("red", "blue", "black"), lwd = 3, cex = 0.6, bty = "n") 
+
+interaction.plot(dat$PolIdeology, dat$RaceF, dat$Recreation,
+  lwd = 3, col = c("red", "blue", "black"), trace.label = "Race",
+  xlab = "Political ideology (binned)", ylab = "Mean agreement (1-7)",
+  main = "Recreation programs (Recreation)", legend = FALSE
+)
+
+legend("topright", legend = levels(dat$RaceF),
+       col = c("red", "blue", "black"), lwd = 3, cex = 0.6, bty = "n") 
+
+interaction.plot(dat$PolIdeology, dat$RaceF, dat$TreaAgree,
+  lwd = 3, col = c("red", "blue", "black"), trace.label = "Race",
+  xlab = "Political ideology (binned)", ylab = "Mean agreement (1-7)",
+  main = "Treatment vs arrest (TreaAgree)", legend = FALSE
+)
+
+legend("topright", legend = levels(dat$RaceF),
+       col = c("red", "blue", "black"), lwd = 3, cex = 0.6, bty = "n") 
+
+interaction.plot(dat$PolIdeology, dat$RaceF, dat$HelpAgree,
+  lwd = 3, col = c("red", "blue", "black"), trace.label = "Race",
+  xlab = "Political ideology (binned)", ylab = "Mean agreement (1-7)",
+  main = "Early help for families (HelpAgree)", legend = FALSE
+)
+
+legend("topright", legend = levels(dat$RaceF),
+       col = c("red", "blue", "black"), lwd = 3, cex = 0.6, bty = "n") 
+
+par(mfrow = c(1,1))
+```
+
+Across all four outcomes, there is a clear ideological gradient: moving from `Liberal (1–3)` to `Conservative (7–9)`, mean agreement with these preventive/social-support policies generally decreases. Many race-specific lines are not strictly parallel, suggesting that the impact of ideology may differ by race (i.e., potential `Race` $\times$ `Ideology` interaction).
+
+*   For `JobProv`, support generally declines as ideology becomes more conservative, but the pattern differs by race. The visibly different line shapes suggest a possible `Race` $\times$ `Ideology` interaction.
+
+*   For `Recreation`, agreement decreases as ideology becomes more conservative in all groups, indicating a broadly consistent ideology main effect. `White` and `Black` show similar downward trends, whereas the `Other` group drops much more sharply from `Liberal` to `Moderate`, making the lines non-parallel and suggesting that any interaction may be driven by the `Other` group.
+
+*   For `TreaAgree`, support also declines with increasing conservatism. The non-parallel pattern is consistent with a potential `Race` $\times$ `Ideology` interaction.
+
+*   For `HelpAgree`, the `White` group shows a gradual decline with increasing conservatism. The `Black` group remains high from Liberal to `Moderate` but drops sharply among `Conservatives` (a steeper decline). The `Other` group slightly increases from `Liberal` to `Moderate`. The pronounced non-parallelism—especially the sharp drop for `Black` conservatives—suggests a potentially stronger interaction for this outcome.
+
+Note that the “Other” race line shows large swings in several panels, which may reflect small cell counts and/or imbalance. Therefore, interpretation for the Other group should be cautious. In the subsequent two-way MANOVA and contrasts, robustness should be evaluated alongside the cell sample sizes.
+
+
+## 2. Two-Way MANOVA
+
+Run Two-Way MANOVA for these two categorical factors.
+
+```{r}
+table(dat$RaceF, dat$PolIdeology, useNA = "ifany")
+```
+The original 3 $\times$ 3 design (Race: `White`/`Black`/`Other` $\times$ `Ideology`: 3 bins) contains an empty cell (`Other` $\times$ `Conservative` = 0), making the Type III MANOVA with an interaction term not identifiable (singular). To ensure estimability while preserving a two-factor design, Race was collapsed into `White` vs `Non-White` and the 2 $\times$ 3 two-way MANOVA was refit.
+
+```{r}
+# 1) Merge `Race`: `White` vs `Non-White`
+dat$Race2 <- factor(ifelse(dat$RaceF == "White", "White", "NonWhite"))
+
+# 2) Check the new cross-tabulation (all values must be > 0)
+table(dat$Race2, dat$PolIdeology)
+
+# 3) Two-way MANOVA (Type III)
+
+    # Include these options below to get correct Type III sum of squares (partial SS)
+    # See  https://rcompanion.org/rcompanion/d_04.html for an explanation
+    # This will make results consistent with other stat programs like SAS and SPSS
+options(contrasts = c("contr.sum", "contr.poly"))
+CrimeMAOV <- lm(cbind(JobProv, Recreation, TreaAgree, HelpAgree) ~ 
+                  Race2 * PolIdeology, data = dat)
+
+summary(Anova(CrimeMAOV, type = 3), univariate = T)
+```
+
+*Multivariate Results*
+
+`Political Ideology` shows a significant multivariate effect (Pillai = 0.0393, approx F = 2.64, p = 0.0072), indicating that the overall response vector across the four attitudes differs by ideology.
+
+`Race2` is not significant at the multivariate level (Pillai = 0.0056, p = 0.565), suggesting no clear overall difference between `White` and `Non-White` after accounting for ideology and the interaction.
+
+The `Race2` $\times$ `PolIdeology` interaction is not significant multivariately (Pillai = 0.0179, p = 0.303), indicating that, overall, the effect of ideology does not differ significantly between `White` and `Non-White`.
+
+*Univariate Results*
+
+At the univariate level, `PolIdeology` is significant for all four outcomes:
+
+*   `JobProv`: F = 9.07, p = 0.0027
+
+*   `Recreation`: F = 14.33, p = 0.00017 (strongest)
+
+*   `TreaAgree`: F = 3.66, p = 0.026
+
+*   `HelpAgree`: F = 3.49, p = 0.031
+
+Thus, ideology is associated with systematic differences across multiple preventive/social-support policies, with the largest effect observed for `Recreation` programs.
+
+The interaction term is significantly associated with `JobProv` ($F = 4.03$, $p = 0.045$) but not with the other three outcomes. This suggests that ideology may relate to support for youth job provision differently by race group; however, because the multivariate interaction is not significant, this finding should be interpreted cautiously and probed further with planned contrasts.
+
+## 3. Multivariate and Univariate Contrasts
+
+Run as a one-way ANOVA, perform multivariate and univariate contrasts to compare levels of a particular factor or combinations of factors. 
+
+In the previous two-way MANOVA, Political Ideology showed a significant multivariate main effect, and the interaction term was significant for JobProv at the univariate level. Therefore, planned contrasts were conducted to determine whether ideology differences existed within a specific race group and whether that ideology effect differed by race.
+
+```{r}
+options(contrasts = c("contr.treatment", "contr.poly"))
+
+dat$Group <- interaction(dat$Race2, dat$PolIdeology, sep = "_", drop = TRUE)
+dat$Group <- as.factor(dat$Group)
+
+#Fit one way MANOVA model
+CrimeMAOV2 <- lm(cbind(JobProv, Recreation, TreaAgree, HelpAgree) ~ Group, 
+                 data = dat)
+
+datJobProv <- lm(JobProv ~ Group, data = dat)
+
+# Multivariate contrast: compare White liberals vs White conservatives
+linearHypothesis(CrimeMAOV2, "GroupWhite_Liberal - GroupWhite_Conservative = 0")
+
+# Univariate contrast: compare White liberals vs White conservatives on JobProv
+linearHypothesis(datJobProv, "GroupWhite_Liberal - GroupWhite_Conservative = 0")
+
+# Multivariate difference-in-differences
+linearHypothesis(
+  CrimeMAOV2,
+  "GroupWhite_Liberal - GroupWhite_Conservative + GroupNonWhite_Conservative = 0"
+)
+
+# Univariate difference-in-differences for JobProv
+linearHypothesis(
+  datJobProv,
+  "GroupWhite_Liberal - GroupWhite_Conservative + GroupNonWhite_Conservative = 0"
+)
+```
+
+*Note*:
+
+The second contrast was intended to test a difference-in-differences pattern:
+
+(White Liberal - White Conservative) - (NonWhite Liberal - NonWhite Conservative) = 0
+
+Conceptually, this asks whether the Liberal-to-Conservative difference is the same for White and NonWhite respondents. However, because treatment coding was used, NonWhite_Liberal served as the reference group and therefore does not appear as a separate coefficient in the model. As a result, the contrast must be written in terms of the estimated coefficients as:
+
+GroupWhite_Liberal - GroupWhite_Conservative + GroupNonWhite_Conservative = 0
+
+This is algebraically equivalent to the original difference-in-differences contrast under treatment coding.
+
+### Contrast 1: White liberals vs White conservatives
+
+*Multivariate result*: The multivariate contrast showed a significant difference between White liberals and White conservatives across the joint response vector of the four outcomes ($Pillai = 0.0854$, approx $F = 12.28$, $p < 0.001$). This indicates that, among White respondents, `PolIdeology` is strongly associated with the overall pattern of support for preventive/social-support crime policies.
+
+*Univariate result for `JobProv`*: At the univariate level, White liberals and White conservatives also differed significantly on `JobProv` ($F = 38.34$, $p < 0.001$). Together with the interaction plot, this suggests that White liberals show substantially greater support than White conservatives for providing jobs to inner-city youth.
+
+### Contrast 2: Difference-in-differences
+
+*Multivariate result*: The multivariate difference-in-differences contrast was not significant ($Pillai = 0.0062$, approx $F = 0.823$, $p = 0.511$), indicating that, across the four outcomes jointly, the Liberal-to-Conservative change does not differ significantly between White and NonWhite respondents.
+
+*Univariate result for `JobProv`*: For `JobProv`, the univariate difference-in-differences contrast was also not significant ($F = 1.22$, $p = 0.270$). Thus, although White liberals and White conservatives differ substantially, the magnitude of that ideology contrast is not significantly larger than the corresponding ideology contrast among NonWhite respondents.
+
+These planned contrasts indicate that `PolIdeology` has a significant effect within the White group, especially for `JobProv`. However, the difference-in-differences tests suggest that this ideology effect does not significantly differ by Race2 (White vs NonWhite). 
+
+## 4. Multiple-Response Linear Model
+
+Add a continuous variable to the model and fit as a multiple-response linear model. 
+
+Before fitting the multiple-response linear model, scatterplots and correlations were examined to assess whether the continuous covariate (`ReliLevel`) had approximately linear relationships with the response variables (`JobProv`, `Recreation`, `TreaAgree`, and `HelpAgree`). The following figure shows a correlation/scatterplot matrix for `ReliLevel` and the four response variables.
+
+```{r, include=FALSE}
+vars_needed <- c("JobProv", "Recreation", "TreaAgree", "HelpAgree",
+                 "RaceF", "PolIdeology", "ReliLevel")
+
+dat2 <- ohiocrimehm[complete.cases(ohiocrimehm[, vars_needed]), vars_needed]
+
+# Make sure Race2 exists in dat2
+dat2$Race2 <- factor(ifelse(dat2$RaceF == "White", "White", "NonWhite"))
+```
+
+```{r}
+chart.Correlation(
+  dat2[, c("ReliLevel","JobProv","Recreation","TreaAgree","HelpAgree")],
+  histogram = TRUE,
+  pch = 19,
+  main = "Correlation Matrix of ReliLevel and Response Variables"
+)
+```
+
+The plots suggest that the assumption of approximate linear relationships between the covariate and the responses is reasonable, and therefore it is reasonable to include `ReliLevel` as a continuous covariate in the multiple-response linear model.
+
+A multiple-response linear model including `Race2`, `PolIdeology`, their interaction, and the continuous covariate `ReliLevel` was fitted.
+
+```{r}
+options(contrasts = c("contr.sum", "contr.poly"))
+
+# Fit multiple-response linear model
+CrimeMAOV3 <- lm(cbind(JobProv, Recreation, TreaAgree, HelpAgree) ~
+                      Race2 * PolIdeology + ReliLevel,
+                    data = dat2)
+
+# Multivariate and univariate results
+summary(Anova(CrimeMAOV3, type = 3), univariate = TRUE)
+```
+
+`PolIdeology` was significant at the multivariate level ($Pillai = 0.0431$, $p = 0.004$), indicating that the overall response vector differs across `PolIdeology` groups. In contrast, `Race2`, `ReliLevel`, and the interaction were not significant at the multivariate level.
+
+At the univariate level, `PolIdeology` was significant for all four responses (`JobProv`, `Recreation`, `TreaAgree`, and `HelpAgree`). `ReliLevel` was only significant for `HelpAgree` ($p = 0.044$), while its effects on the other responses were not significant. The interaction term was significant only for `JobProv`.
+
+Thus, political ideology remained the strongest predictor of policy attitudes, while `ReliLevel` showed only a weak univariate association with `HelpAgree`.
+
+## 5. Check Model Assumptions
+
+To assess the multivariate normality assumption, a chi-square quantile plot of the residuals was examined. 
+
+```{r}
+# Check multivariate normality of residuals
+cqplot(CrimeMAOV3$residuals, main = "Residuals from Crime multiple-response model")
+```
+
+In the plot, most points fall close to the reference line, indicating that the residuals approximately follow a multivariate normal distribution. Some deviations appear in the upper tail, but these deviations are relatively small and are expected because the response variables are measured on discrete Likert-type scales.
+
+```{r}
+par(mfrow = c(2,2))
+
+modJobProv_cov <- lm(JobProv ~ Race2 * PolIdeology + ReliLevel, data = dat2)
+modHelpAgree_cov <- lm(HelpAgree ~ Race2 * PolIdeology + ReliLevel, data = dat2)
+
+plot(modJobProv_cov, which = c(1,2), pch = 19, col = "blue", main = "JobProv")
+plot(modHelpAgree_cov, which = c(1,2), pch = 19, col = "blue", main = "HelpAgree")
+```
+
+Additional residual diagnostics were examined using residual vs. fitted plots and Q–Q plots from the univariate models (for example, for `JobProv` and `HelpAgree`). These plots do not show strong patterns or clear heteroscedasticity, and the Q–Q plots indicate only mild deviations from normality at the extreme tails.
+
+Overall, the diagnostic plots suggest that the assumptions of the linear model are reasonably satisfied. Because `ReliLevel` was not significant at the multivariate level, a simplified model without this covariate was also fitted as a sensitivity check.
+
+As a sensitivity check, because `ReliLevel` was not significant at the multivariate level, a simplified model without this covariate was also fitted:
+
+```{r}
+CrimeMAOV_final <- lm(cbind(JobProv, Recreation, TreaAgree, HelpAgree) ~
+                        Race2 * PolIdeology,
+                      data = dat2)
+
+summary(Anova(CrimeMAOV_final, type = 3), univariate = TRUE)
+
+cqplot(CrimeMAOV_final$residuals, main = "Residuals from simplified model")
+```
+
+The simplified model produced results similar to the original model, indicating that removing `ReliLevel` does not substantially change the conclusions. Therefore, the interpretation of the results remains stable.
+
+## 6. MRPP
+
+```{r, include=FALSE}
+# keep complete cases for MRPP
+vars_mrpp <- c("JobProv", "Recreation", "TreaAgree", "HelpAgree", "PolIdeology")
+dat_mrpp <- ohiocrimehm[complete.cases(ohiocrimehm[, vars_mrpp]), vars_mrpp]
+```
+
+```{r}
+# run MRPP by political ideology
+mrpp_result <- mrpp(dat_mrpp[, c("JobProv", "Recreation", "TreaAgree", "HelpAgree")],
+                    dat_mrpp$PolIdeology)
+
+mrpp_result
+```
+
+A multi-response permutation procedure (MRPP) was conducted using `JobProv`, `Recreation`, `TreaAgree`, and `HelpAgree` as the response set and `PolIdeology` as the grouping variable. The MRPP result was significant ($A = 0.0326$, $p = 0.001$), indicating that the overall response profiles differed across political ideology groups. Although the effect size was small, this result provides nonparametric support for the significant ideology effect found in the MANOVA.
+
+
+
+
+*Note*: `ChatGPT` is used for grammar correction.
+
