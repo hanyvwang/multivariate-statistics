@@ -1,0 +1,479 @@
+---
+title: "Cluster Analysis — stream"
+author: "Hanyu Wang"
+output: pdf_document
+---
+
+```{r, include=FALSE}
+# install.packages(c("cluster", "factoextra", "fpc", "ggplot2", "gridExtra", "MASS", "NbClust", "readxl", "rlang"))
+
+library(readxl)
+library(cluster)
+library(factoextra)
+library(fpc)
+library(ggplot2)
+library(gridExtra)
+library(MASS)
+library(NbClust)
+library(readxl)
+```
+
+## Introduction
+
+The file `stream.xls` contains data on the prevalence of 11 species of
+microcrustacea in seven streams in Alaska. Five measurements were made at
+each site. The species are
+
+  `sp1` Nitocra hibernica
+  
+  `sp2` Atheyella illinoisensis
+  
+  `sp3` Atheyella idahoenis
+  
+  `sp4` Bryocamptus hiemalis
+  
+  `sp5` Bryocamptus zschokkei
+  
+  `sp6` Acanthocyclops vernalis
+  
+  `sp7` Alona guttata
+  
+  `sp8` Graptoleberis
+  
+  `sp9` Chydorus
+  
+  `sp10` macrothricidae
+  
+  `sp11` Maraenobiotus insegnipes
+
+Stream age, the Pfankuch index (a measure of stability – higher values are lower
+stability), Temperature in degrees C, turbitidy, conductivity, and alkalinity were
+also measured for each stream – these values are also included.
+
+Data is taken from Peter Shaw’s Multivariate Statistics for the Environmental
+Sciences (2003), p. 24
+
+```{r, include=FALSE}
+stream <- read_excel("stream.xls")
+ 
+colnames(stream) <- c("stream", "rep",
+                      "sp1","sp2","sp3","sp4","sp5","sp6",
+                      "sp7","sp8","sp9","sp10","sp11",
+                      "age","cwd","temp","turbidity","conductivity","alkalinity")
+ 
+# Average the 5 replicates per stream
+stream_mean <- aggregate(stream[, 3:19],
+                         by = list(stream = stream$stream),
+                         FUN = mean)
+rownames(stream_mean) <- stream_mean$stream
+stream_mean <- stream_mean[, -1]
+ 
+sp_data  <- stream_mean[, 1:11]
+env_data <- stream_mean[, 12:17]
+```
+
+## 1. DISTANCE METRICS AND DATA TRANSFORMATION
+
+```{r}
+sp_log <- log(sp_data + 1)
+env_scaled  <- as.data.frame(scale(env_data))
+
+combined    <- cbind(sp_log, env_scaled)
+```
+
+The species data (sp1–sp11) consist of count data with many zeros and a heavily right-skewed distribution. A log(x+1) transformation was applied prior to clustering to compress extreme values and produce a more symmetric distribution. The "+1" offset avoids undefined values when counts are zero. After log transformation, the species variables are on a comparable scale to one another, so no further standardization of the species data is needed.
+
+The environmental variables (age, temperature, turbidity, conductivity, etc.) are measured on very different scales — for example, stream age ranges from 18 to 1,377 years while temperature ranges from 2.8 to 6.4°C. If left unstandardized, high-magnitude variables such as stream age would dominate the distance calculations regardless of their ecological relevance. Therefore, the environmental variables were standardized (z-scored) separately before being combined with the log-transformed species data.
+
+Both Euclidean and Manhattan distances are appropriate for this combined continuous dataset. Euclidean distance is the standard choice; Manhattan distance is less sensitive to outliers and serves as a useful comparison. No binary or categorical distance metrics are needed since all variables are continuous after transformation.
+
+## 2. HIERARCHICAL CLUSTER ANALYSIS
+
+### Distance matrices
+
+```{r}
+#Get distance matrix
+dist_euc <- dist(combined, method = "euclidean")   # Euclidean
+dist_man <- dist(combined, method = "manhattan")   # Manhattan
+```
+
+### Cluster objects
+
+```{r}
+#Perform cluster analysis
+euc_war <- hclust(dist_euc, method = "ward.D2")  # Euclidean + Ward
+euc_com <- hclust(dist_euc, method = "complete") # Euclidean + Complete
+euc_sin <- hclust(dist_euc, method = "single")   # Euclidean + Single
+
+man_war <- hclust(dist_man, method = "ward.D2")  # Manhattan + Ward
+man_com <- hclust(dist_man, method = "complete") # Manhattan + Complete
+man_sin <- hclust(dist_man, method = "single")   # Manhattan + Single
+```
+
+### Plot dendrograms
+
+```{r}
+par(mfrow = c(2, 3), mar = c(4, 4, 3, 1))
+
+plot(euc_war, xlab = "", ylab = "Distance", main = "Euclidean + Ward")
+rect.hclust(euc_war, k = 3)
+
+plot(euc_com, xlab = "", ylab = "Distance", main = "Euclidean + Complete")
+rect.hclust(euc_com, k = 3)
+
+plot(euc_sin, xlab = "", ylab = "Distance", main = "Euclidean + Single")
+rect.hclust(euc_sin, k = 3)
+
+plot(man_war, xlab = "", ylab = "Distance", main = "Manhattan + Ward")
+rect.hclust(man_war, k = 3)
+
+plot(man_com, xlab = "", ylab = "Distance", main = "Manhattan + Complete")
+rect.hclust(man_com, k = 3)
+
+plot(man_sin, xlab = "", ylab = "Distance", main = "Manhattan + Single")
+rect.hclust(man_sin, k = 3)
+```
+
+Five of the six methods consistently identify the same three groups at the k=3 level:
+
+  *Group A*: berg n, tyndall, berg s, rush pt
+  *Group B*: carolus
+  *Group C*: stonefly, wolf pt
+
+  The exception is `Euclidean + Single`, which shows pronounced chaining — carolus splits off immediately at a very low distance, and the remaining streams merge sequentially rather than forming distinct groups. This is a well-known artifact of single linkage and makes the result difficult to interpret meaningfully.
+
+Among the remaining five methods, the key difference lies in which two groups merge first at the higher level. 
+
+  `Euclidean + Ward`, `Euclidean + Complete`, and `Manhattan + Ward` place Group B and Group C as closer to each other, merging carolus with stonefly/wolf pt before joining Group A. 
+
+  `Manhattan + Complete` and `Manhattan + Single` place Group A and Group C as closer, merging berg n/tyndall/berg s/rush pt with stonefly/wolf pt on one branch.  
+
+  This difference may reflect the greater sensitivity of Manhattan distance to the many zero-count species: stonefly and wolf pt each have almost no species, which makes their absolute count differences from the Bryocamptus-dominated Group A streams particularly large under the Manhattan metric, pushing them away from Group A and toward carolus instead.
+
+Setting aside the unstable single linkage results, the remaining four methods agree on both the three-cluster solution, suggesting this grouping is robust.
+
+
+## 3. EVALUATE NUMBER OF CLUSTERS
+
+```{r}
+#start with plot of universally applicable statistics
+source("https://raw.githubusercontent.com/jreuning/sds363_code/refs/heads/main/HClusEval3.R.txt")
+
+#Call the function
+hclus_eval(combined, dist_m = 'euclidean', clus_m = 'complete', 
+           plot_op = T, print_num = 5)
+```
+Using Euclidean distance and complete linkage, four metrics were examined to determine the optimal number of clusters.
+
+  `RSQ`: Increases sharply from k=1 to k=2, then levels off, suggesting an elbow at k=2.
+
+  `RMSSTD`: Drops steeply from k=3 to k=4, then stabilizes, indicating an elbow at k=4.
+  
+  `SPRSQ`: Drops steeply from k=1 to k=2, then stabilizes, indicating an elbow at k=2.
+
+  `CD`: Drops steeply from k=1 to k=2, then stabilizes, indicating an elbow at k=2.
+
+
+```{r}
+# Note: NbClust with index = "all" failed because 
+#       several indices require a covariance matrix, 
+#       which cannot be computed with only 7 observations.
+
+# NbClust(combined, distance = "euclidean", 
+#             min.nc=2, max.nc=6, method = "complete", 
+#             index = "all", alphaBeale = 0.1)
+
+# I used ChatGPT to determine the indices that 
+# do not require a covariance matrix
+
+indices <- c("kl", "ch", "hartigan", "cindex", "db", 
+             "silhouette", "duda", "pseudot2", "beale", "ratkowsky",
+             "ball", "ptbiserial", "mcclain", "gamma", "gplus", 
+             "tau", "dunn", "sdindex", "sdbw")
+
+results <- list()
+for (idx in indices) {
+  tryCatch({
+    res <- NbClust(combined, distance = "euclidean",
+                   min.nc = 2, max.nc = 5, method = "complete",
+                   index = idx, alphaBeale = 0.1)
+    results[[idx]] <- res$Best.nc[1]
+  }, error = function(e) {
+    message(paste("Skipped:", idx, "-", e$message))
+  })
+}
+
+# Summary
+do.call(rbind, results)
+```
+
+
+
+
+Among 19 valid indices: 9 indices favored k=5, 5 indices favored k=2, 3 indices favored k=4, and 2 indices favored k=3. 
+
+However, given that only 7 streams are available, k=5 or k=4 would leave some clusters with a single observation, making interpretation difficult. 
+
+Combined with the results in Q2, k=2 was ruled out because three of the six dendrograms showed that one group would contain only a single stream, making it an uninterpretable partition. 
+
+Therefore, k=3 is selected as the final solution.
+
+
+## 4. K-Means Clustering
+
+
+```{r}
+set.seed(321)
+
+km1 <- kmeans(combined, centers = 3)
+km1
+
+#see which countries are in each cluster
+for (i in 1:3){
+  print(paste("Streams in Cluster ", i))
+  print(rownames(combined)[km1$cluster == i])
+  cat("\n")
+}
+```
+
+
+
+
+```{r}
+#kdata is just normalized input dataset
+kdata <- as.matrix(combined)
+n.lev <- 6  #set max value for number of clusters k
+
+# Calculate the within groups sum of squared error (SSE) 
+# for the number of cluster solutions selected by the user
+wss <- rnorm(10)
+while (prod(wss==sort(wss,decreasing=T))==0) {
+  wss <- (nrow(kdata)-1)*sum(apply(kdata,2,var))
+  for (i in 2:n.lev) wss[i] <- sum(kmeans(kdata, centers=i)$withinss)}
+
+# Calculate the within groups SSE for 250 randomized data sets 
+# (based on the original input data)
+k.rand <- function(x){
+  km.rand <- matrix(sample(x),dim(x)[1],dim(x)[2])
+  rand.wss <- as.matrix(dim(x)[1]-1)*sum(apply(km.rand,2,var))
+  for (i in 2:n.lev) rand.wss[i] <- sum(kmeans(km.rand, centers=i)$withinss)
+  rand.wss <- as.matrix(rand.wss)
+  return(rand.wss)
+}
+
+rand.mat <- matrix(0,n.lev,250)
+
+k.1 <- function(x) { 
+  for (i in 1:250) {
+    r.mat <- as.matrix(suppressWarnings(k.rand(kdata)))
+    rand.mat[,i] <- r.mat}
+  return(rand.mat)
+}
+
+# Same function as above for data with < 3 column variables
+k.2.rand <- function(x){
+  rand.mat <- matrix(0,n.lev,250)
+  km.rand <- matrix(sample(x),dim(x)[1],dim(x)[2])
+  rand.wss <- as.matrix(dim(x)[1]-1)*sum(apply(km.rand,2,var))
+  for (i in 2:n.lev) rand.wss[i] <- sum(kmeans(km.rand, centers=i)$withinss)
+  rand.wss <- as.matrix(rand.wss)
+  return(rand.wss)
+}
+
+k.2 <- function(x){
+  for (i in 1:250) {
+    r.1 <- k.2.rand(kdata)
+    rand.mat[,i] <- r.1}
+  return(rand.mat)
+}
+
+# Determine if the data table has > or < 3 variables and call function above
+if (dim(kdata)[2] == 2) { rand.mat <- k.2(kdata) } else { rand.mat <- k.1(kdata) }
+
+# Plot within groups SSE against all tested cluster solutions
+
+# Plot 1: Log SSE
+xrange <- range(1:n.lev)
+yrange <- range(log(rand.mat),log(wss))
+plot(xrange,yrange, type='n', 
+     xlab='Cluster Solution', ylab='Log of Within Group SSE', 
+     main='Cluster Solutions against Log of SSE')
+for (i in 1:250) lines(log(rand.mat[,i]),type='l',col='red')
+lines(log(wss), type="b", col='blue')
+legend('topright',c('Actual Data', '250 Random Runs'), 
+       col=c('blue', 'red'), lty=1)
+
+# Plot 2: Normal SSE
+yrange <- range(rand.mat,wss)
+plot(xrange,yrange, type='n', 
+     xlab="Cluster Solution", ylab="Within Groups SSE", 
+     main="Cluster Solutions against SSE")
+for (i in 1:250) lines(rand.mat[,i],type='l',col='red')
+lines(1:n.lev, wss, type="b", col='blue')
+legend('topright',c('Actual Data', '250 Random Runs'), 
+       col=c('blue', 'red'), lty=1)
+
+# Calculate the mean and standard deviation of difference between SSE of actual 
+# and randomized data
+r.sse <- matrix(0,dim(rand.mat)[1],dim(rand.mat)[2])
+wss.1 <- as.matrix(wss)
+for (i in 1:dim(r.sse)[2]) {
+  r.temp <- abs(rand.mat[,i]-wss.1[,1])
+  r.sse[,i] <- r.temp}
+r.sse.m <- apply(r.sse,1,mean)
+r.sse.sd <- apply(r.sse,1,sd)
+r.sse.plus <- r.sse.m + r.sse.sd
+r.sse.min <- r.sse.m - r.sse.sd
+
+# Plot differeince between actual SSE mean SSE from 250 randomized datasets
+
+# Plot 3: Log SSE - Random SSE
+xrange <- range(1:n.lev)
+if (min(r.sse.min) < 0){
+   yrange <- range(log(r.sse.plus - min(r.sse.min)*1.05), 
+                   log(r.sse.min - min(r.sse.min)*1.05))
+} else {
+   yrange <- range(log(r.sse.plus), log(r.sse.min))
+}
+
+plot(xrange,yrange, type='n',
+     xlab='Cluster Solution', ylab='Log of SSE - Random SSE', 
+     main='Cluster Solutions against (Log of SSE - Random SSE)')
+lines(log(r.sse.m), type="b", col='blue')
+lines(log(r.sse.plus), type='l', col='red')
+lines(log(r.sse.min), type='l', col='red')
+legend('topright',c('SSE - random SSE', 'SD of SSE-random SSE'), 
+       col=c('blue', 'red'), lty=1)
+
+# Plot 4: Normal SSE - Random SSE
+xrange <- range(1:n.lev)
+yrange <- range(r.sse.plus,r.sse.min)
+plot(xrange,yrange, type='n',
+     xlab='Cluster Solution', ylab='SSE - Random SSE', 
+     main='Cluster Solutions against (SSE - Random SSE)')
+lines(r.sse.m, type="b", col='blue')
+lines(r.sse.plus, type='l', col='red')
+lines(r.sse.min, type='l', col='red')
+legend('topright',c('SSE - random SSE', 'SD of SSE-random SSE'), 
+       col = c('blue', 'red'), lty = 1)
+
+# Apply K-means with chosen cluster number
+clust.level <- 3
+
+set.seed(321)
+
+fit <- kmeans(kdata, clust.level)
+aggregate(kdata, by=list(fit$cluster), FUN=mean)
+clust.out <- fit$cluster
+kclust <- as.matrix(clust.out)
+kclust.out <- cbind(kclust, combined)
+write.table(kclust.out, file="kmeans_out.csv", sep=",")
+
+# See which streams are in each cluster
+for (i in 1:clust.level){
+  print(paste("Streams in Cluster", i))
+  print(rownames(kdata)[fit$cluster == i])
+  cat("\n")
+}
+```
+
+K-means clustering was applied with k=3 (set.seed(321) for reproducibility). The plots suggest elbows at approximately k=2 and k=4.
+
+The three-cluster solution explained 58.2% of total variance (between_SS / total_SS). The resulting groups are:
+
+  `Cluster 1` (berg n, berg s, rush pt, tyndall): characterized by high sp4 (Bryocamptus hiemalis) and sp5 (B. zschokkei) abundance, moderate sp3 and sp6, and average environmental conditions.
+
+  `Cluster 2` (carolus): a single-stream cluster distinguished by high sp1 (Nitocra hibernica), sp2 (Atheyella illinoisensis), sp6, sp8, and sp10, along with the oldest stream age — suggesting a uniquely mature, species-rich stream.
+  
+  `Cluster 3` (stonefly, wolf pt): characterized by near-zero species counts except sp6 and sp11 (Maraenobiotus insegnipes), high turbidity, and the coldest, youngest streams.
+
+These results are consistent with the hierarchical clustering results from Questions 2 and 3.
+
+
+
+
+## 5. Discriminant Analysis and PCA
+
+```{r, include=FALSE}
+sp_raw  <- stream[, 3:13]
+env_raw <- stream[, 14:19]
+
+sp_raw_log <- log(sp_raw + 1)
+env_raw_scaled  <- as.data.frame(scale(env_raw))
+
+combined_raw <- as.data.frame(scale(cbind(sp_raw_log, env_raw_scaled)))
+```
+
+```{r, include=FALSE}
+dist_euc_raw <- dist(combined_raw, method = "euclidean")   # Euclidean
+euc_war_raw <- hclust(dist_euc_raw, method = "ward.D2")  # Euclidean + Ward
+
+cuts_raw <- cutree(euc_war_raw, k = 3)
+```
+
+### PCA space
+
+```{r}
+clusplot(combined_raw, cuts_raw, color = TRUE, shade = TRUE, labels = 2, lines = 0,
+         main = "Three Cluster Plot, Complete Linkage, First two PC", cex = .5)
+```
+
+The three-cluster solution is displayed in PCA space. The first two principal components explain 43.8% of the total variability. The three clusters are well-separated, with Cluster 2 (carolus) appearing as a distinct outlier along Component 1, and Clusters 1 and 3 occupying different regions along Component 2.
+
+
+### Discriminant analysis space
+
+```{r}
+plotcluster(combined_raw, cuts_raw, main = "Three Cluster Solution in DA Space",
+            xlab = "First Discriminant Function", 
+            ylab = "Second Discriminant Function")
+```
+
+DA space visualization was attempted but produced degenerate results. With only 35 observations and 17 variables, the within-group covariance matrix is nearly singular, causing DA to yield extreme, uninterpretable values. The PCA plot is therefore used as the sole visualization.
+
+
+## 6. Number of Groups
+
+Based on all analyses, three groups appear to be present in the data.
+
+The hierarchical clustering dendrograms (Question 2), hclus_eval metrics (Question 3), and k-means SSE plots (Question 4) all suggested elbows at k=2 and k=4. The NbClust results were mixed, with votes spread across k=2, 3, 4, and 5. However,  k=3 remained the most interpretable choice given only 7 streams.
+
+To further evaluate, PCA plots were produced for k=2 and 4. The k=2 solution merged ecologically distinct streams into one large overlapping cluster, losing meaningful differentiation. The k=4 solution visually resembles k=3, simply splitting one existing cluster further without revealing new structure. The k=3 solution produces the clearest separation — three distinct, non-overlapping groups — and is therefore selected as the final solution.
+
+```{r}
+dist_euc_raw2 <- dist(combined_raw, method = "euclidean")   # Euclidean
+euc_war_raw2 <- hclust(dist_euc_raw2, method = "ward.D2")  # Euclidean + Ward
+
+cuts_raw2 <- cutree(euc_war_raw2, k = 2)
+
+clusplot(combined_raw, cuts_raw2, color = TRUE, shade = TRUE, labels = 2, lines = 0,
+         main = "Two Cluster Plot, Complete Linkage, First two PC", cex = .5)
+```
+
+```{r}
+dist_euc_raw4 <- dist(combined_raw, method = "euclidean")   # Euclidean
+euc_war_raw4 <- hclust(dist_euc_raw4, method = "ward.D2")  # Euclidean + Ward
+
+cuts_raw4 <- cutree(euc_war_raw4, k = 4)
+
+clusplot(combined_raw, cuts_raw4, color = TRUE, shade = TRUE, labels = 2, lines = 0,
+         main = "Four Cluster Plot, Complete Linkage, First two PC", cex = .5)
+```
+
+## 7. Description of Final Groups
+
+The three final groups are consistent across hierarchical clustering and k-means, and make good ecological sense.
+
+  `Group A` (berg n, berg s, rush pt, tyndall) represents moderate-aged, stable streams with diverse Bryocamptus communities. These four streams share high abundances of sp4 and sp5, along with moderate sp3 and sp6, low turbidity, and near-average environmental conditions. The co-occurrence of multiple Bryocamptus species suggests these are relatively stable, well-established streams that support a moderately diverse microcrustacea assemblage.
+
+  `Group B` (carolus) is a single-stream cluster that stands out as ecologically distinct. Carolus has by far the oldest stream age and hosts the richest species composition, including sp1, sp2, sp6, sp8, and sp10 — species absent from all other streams. This is consistent with the expectation that older, more mature streams accumulate greater biodiversity over time.
+
+  `Group C` (stonefly, wolf pt) represents young, disturbed streams with sparse microcrustacea communities. These streams have the youngest ages, lowest temperatures, highest turbidity, and near-zero species counts across most taxa, with only sp6 and sp11 present. High turbidity and young age suggest these streams are geomorphically unstable, supporting only the most tolerant species.
+
+Overall, the three groups reflect a clear ecological gradient from young, disturbed, species-poor streams (Group C) through moderately developed streams (Group A) to an old, stable, species-rich stream (Group B), which is ecologically interpretable and consistent with stream succession theory.
+
+
+
+
+
+
