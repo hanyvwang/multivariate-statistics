@@ -1,0 +1,261 @@
+---
+title: "Ordination-Wisconsin-Forest"
+author: "Hanyu Wang"
+output: pdf_document
+---
+
+```{r, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(vegan)
+library(vegan3d)
+library(mgcv)
+library(MASS)
+library(rgl)
+```
+
+```{r, include=FALSE}
+#get the data
+forest <- read.csv("~/Wisconsin.Forest.csv")
+rownames(forest) <- forest[,1]
+forestenv <- matrix(forest[,17], ncol = 1)
+rownames(forestenv) <- forest[, 1]
+colnames(forestenv) <- c("Stage")
+forest <- forest[, -c(1, 2, 17)]
+forestenv <- data.frame(forestenv)
+```
+
+
+## Introduction
+
+`Wiconsin.Forest.csv`: Relative abundance of 14 species was measured
+on 10 plots. Plots were ordered from pioneer (early stage) to climax (late
+stage). The final column contains that stage of the forest on a scale from 1
+to 10.
+
+
+## 1. Correspondence Analysis
+
+```{r}
+forestca <- cca(forest)
+summary(forestca)
+```
+
+We performed Correspondence Analysis (CA) on the Wisconsin forest dataset to examine patterns of species composition across plots. CA is appropriate for this dataset because it consists of species abundance data and is designed to capture unimodal relationships along ecological gradients.
+
+CA uses chi-square distances to ordinate both species and plots in a low-dimensional space. Plots with similar species composition are located close together, and species with similar distributions across plots are also grouped together.
+
+The results indicate that the first axis (CA1) explains 62.45% of the total inertia, suggesting that most of the variation in species composition is structured along a single dominant gradient .
+
+Because the plots are ordered from early (pioneer) to late (climax) forest stages, this primary axis likely represents a forest succession gradient.
+
+
+## 2. Inertia and Two-Dimensional Plot
+
+The total inertia of the dataset is 0.7215, which represents the overall variability in species composition explained by the correspondence analysis. The first axis (CA1) explains 62.45% of the inertia, while the second axis (CA2) explains 12.46% .
+
+This indicates that most of the variation in the data is captured by the first axis, suggesting a strong underlying ecological gradient. The relatively small contribution of the second axis indicates that additional variation beyond the main gradient is limited.
+
+```{r}
+plot(forestca, main = "Correspondence Analysis for Forest Data", type = "n")
+# Uncomment the line below if you want plot names
+# text(forestca, display = c("sites"), labels = rownames(forest), cex = 0.86)
+points(forestca, pch = 19, col = "black", cex = 1)
+text(forestca, "species", col = "blue", cex = 0.7)
+```
+
+In the biplot, pioneer species such as Bur oak, Black oak, and Shagbark hickory appear on the positive CA1 side, while climax species such as Sugar maple, Ironwood, and Basswood appear on the negative CA1 side, consistent with a successional gradient along CA1.
+
+
+## 3. Data Snaking
+
+There is some evidence of data snaking in the correspondence analysis results. This makes sense because the forest plots are ordered along a strong successional gradient from pioneer to climax stages, so species composition is expected to change gradually along one dominant ecological gradient rather than forming several distinct clusters.
+
+Perform Detrended Correspondence Analysis (DCA) to examine this further, which is designed to reduce the arch effect and provide a more linear representation of the underlying gradient. 
+
+```{r}
+forestdca <- decorana(forest)
+forestdca
+
+plot(forestdca, main = "DCA for forest Data", type = "n")
+# Uncomment the line below if you want plot names
+#text(forestdca, display = c("sites"), labels = rownames(forest), cex = 0.86)
+points(forestdca, pch = 19, col = "black", cex = 1)
+text(forestdca, "species", col = "blue", cex = 1.1)
+
+# Add environmental variables
+fit <- envfit(forestdca, forestenv, permutations = 1000)
+plot(fit, col = "red", lwd = 3)
+```
+
+The DCA output reports an axis length of 2.2637 SD units for DCA1. This value falls between 2 and 4 SD, indicating a moderate gradient length. While a value above 4 SD would indicate strong unimodal species turnover and a clear arch effect, the value of 2.26 suggests that the successional gradient in this dataset is moderate in length — species composition changes substantially but does not show complete turnover between early and late plots. This is consistent with the mild curvature visible in the CA biplot rather than a severe horseshoe shape. DCA successfully reduces this curvature, providing a more linear representation of the successional gradient as confirmed by the Stage vector alignment in the DCA plot.
+
+Compared with the CA ordination, the DCA plot shows a clearer main gradient and less distortion, suggesting that the curvature seen in CA is mainly a mathematical artifact caused by a strong single gradient.
+
+The variable Stage is also overlaided on the DCA plot. The Stage vector aligns strongly with the main ordination axis, which supports the interpretation that forest succession is the dominant source of variation in species composition.
+
+
+## 4. Conclusions
+
+The correspondence analysis reveals that species composition in the forest data is primarily structured along a single dominant gradient. The first axis explains the majority of the variation, indicating that most differences among plots can be summarized along one main dimension.
+
+This gradient is consistent with forest succession, as the plots are ordered from early (pioneer) to late (climax) stages. Species appear to change gradually along this gradient rather than forming distinct clusters, which suggests a continuous ecological transition.
+
+The presence of some curvature in the CA results is expected given the strong underlying gradient. The DCA results provide a more linear representation of this structure, supporting the interpretation that the main pattern is driven by succession rather than multiple independent factors.
+
+Overall, forest succession is the primary factor shaping species composition in this dataset, and most of the variation can be explained by this single ecological gradient.
+
+
+## 5. Multidimensional Scaling
+
+Perform Non-metric Multidimensional Scaling (NMDS) on the Wisconsin Forest species abundance data for 1, 2, and 3 dimensions using Euclidean distance. NMDS is an ordination method that attempts to represent the pairwise dissimilarities among plots in a low-dimensional space. Unlike CA, NMDS makes no distributional assumptions and preserves only the rank order of distances. The metaMDS() function from the vegan package was used, which runs multiple random starts to find the best solution. 
+
+
+```{r results = 'hide'}
+results <- matrix(NA, 21, 3)
+#j is number of dimensions to try
+for (j in 1:3){
+  #i is the number of random repetitions to try
+  for (i in 1:20){
+    temp <- forest[shuffle(nrow(forest)), 1]
+    for (k in 2:ncol(forest)){temp <- cbind(temp, forest[shuffle(nrow(forest)), k])}
+    results[i, j] <- metaMDS(data.frame(temp), k = j, distance = "euclidean")$stress
+  }
+  results[21, j] <- metaMDS(forest, k = j, distance = "euclidean")$stress
+}
+```
+
+
+
+*Another way to do this:*
+
+```{r results = 'hide'}
+forest.mds1 <- metaMDS(forest, distance = "euclidean", k = 1)
+forest.mds2 <- metaMDS(forest, distance = "euclidean", k = 2)
+forest.mds3 <- metaMDS(forest, distance = "euclidean", k = 3)
+```
+
+The Shepard diagrams below show observed dissimilarities against ordination distances for each dimensional solution. Points falling close to the red step function indicate a good fit. Note that the warning "stress is nearly zero" for some permuted datasets is due to the small sample size (n = 10) and does not affect the validity of the true data solution.
+
+```{r}
+stressplot(forest.mds1)
+stressplot(forest.mds2)
+stressplot(forest.mds3)
+```
+
+
+
+
+## 6. Stress
+
+The Shepard plots show the relationship between observed dissimilarities and ordination distances for each dimensional solution — points falling closer to the step function (red line) indicate a better fit.
+
+```{r}
+plot(c(1:3), results[21, ], type = "b", col = "blue", lwd = 3,
+     ylim = c(0, max(results)), xlab = "Dimensions", ylab = "Stress", pch = 19,
+     main = "MDS for Forest Data, Euclidean Distance")
+
+mins <- apply(results[1:20, ], 2, min)
+maxs <- apply(results[1:20, ], 2, max)
+meds <- apply(results[1:20, ], 2, median)
+
+for (i in 1:3){
+  points(rep(i, 3), c(mins[i], meds[i], maxs[i]), type = "b", 
+         col = "red", lwd = 3, pch = 19)
+}
+legend(2.3, max(results), c("MDS Solution", "20 Permutations"), 
+       lwd = 3, col = c("blue", "red"))
+```
+
+
+
+The one-dimensional solution has a stress of approximately 0.10, which is considered acceptable but not ideal. The two-dimensional solution drops substantially to around 0.025, which is excellent (stress < 0.05 indicates a very good representation). The three-dimensional solution reaches near-zero stress, indicating a near-perfect fit. From the permutation comparison plot, the blue line (true data) falls well below the red range (random permutations) at all dimensions, confirming that the MDS solution captures genuine structure rather than noise. Based on these results, two dimensions is sufficient — the improvement from 2D to 3D is minimal and the 2D solution already achieves very low stress.
+
+## 7. MDS results Plot
+
+```{r}
+plot(forest.mds2, type = "t")
+```
+
+
+
+
+The two-dimensional NMDS plot shows a clear separation of plots along NMDS1. Early-successional plots (A, B) appear on the left side of the plot, associated with pioneer species such as Bur oak, Black oak, and Shagbark hickory. Late-successional plots (H, I, J) appear on the right side, associated with climax species such as Sugar maple, Ironwood, Basswood, and Yellowbud hickory. Plot C is an outlier on NMDS2, which is consistent with its unusual Butternut abundance noted in the CA analysis. Overall, the NMDS plot recovers a similar successional gradient as CA but without the arch artifact.
+
+## 8. Overlaid Additional Variables
+
+
+```{r}
+fig <- ordiplot(forest.mds2, type = "none", cex = 1.1, 
+                main = "NMDS for Forest Data")
+text(fig, "species", col = "red", cex = 0.7)
+text(fig, "sites", col = "blue", cex = 0.7)
+
+fit <- envfit(forest.mds2, forestenv, permutations = 1000)
+plot(fit, col = "black", lwd = 3)
+fit
+
+tmp1 <- with(forestenv, ordisurf(forest.mds2, Stage, add = TRUE))
+
+
+#plot of functions for Stage
+vis.gam(tmp1, main = "Stage")
+```
+
+
+The envfit() results show that Stage has r² = 0.9452 and p = 0.000999, meaning that 94.5% of the variation in successional stage is explained by the two-dimensional NMDS solution, and this relationship is highly statistically significant. The Stage arrow points toward the upper right of the NMDS plot, indicating that later successional stages are associated with plots in that direction (H, I, J with Sugar maple, Ironwood, and Basswood).
+
+The ordisurf() contour lines overlay a smooth GAM-fitted surface of Stage across the ordination space. The contours run roughly diagonally from lower-left (early stages) to upper-right (late stages), confirming a nearly linear relationship between Stage and the NMDS axes. The vis.gam() wireplot shows this surface in three dimensions — the nearly flat, uniformly sloping plane confirms that Stage increases smoothly and monotonically across the ordination space with little non-linearity, further supporting the interpretation that forest succession is the single dominant gradient structuring species composition.
+
+## 9. Canonical Correspondence Analysis
+
+```{r}
+forestcca <- cca(forest, forestenv, scale = "FALSE")
+plot(forestcca)
+
+#another way to make the plot (basically same thing)
+plot(forestcca, main = "CCA for Forest Data", type = "n")
+#uncomment the line below if you want plot names
+#text(forestcca, display = c("sites"), labels = rownames(forest), cex = 0.86)
+points(forestcca, pch = 19, col = "black", cex = 1)
+text(forestcca, "species", col = "blue", cex = 0.7)
+
+#add environmental variables
+fit <- envfit(forestcca, forestenv, permutations = 1000)
+plot(fit, col = "red", lwd = 3)
+fit
+
+#get summary information
+summary(forestcca)
+```
+
+
+Canonical Correspondence Analysis (CCA) was performed using cca(forest, forestenv), which constrains the ordination axes to be linear combinations of the environmental variable Stage. From summary(forestcca), the constrained inertia is 0.4080, accounting for 56.54% of total inertia (0.7215). This means that Stage alone explains over half of all variation in species composition. The remaining 43.46% is unconstrained residual variation not explained by Stage.
+The CCA1 axis eigenvalue is 0.4080, which is essentially identical to the CA1 eigenvalue (0.4506), confirming that the first CA axis was already very well aligned with the successional gradient. The envfit() result shows Stage has $r^2 = 0.9672$ and $p = 0.000999$ in the CCA space. The Stage arrow in the CCA biplot points strongly in the negative CCA1 direction, and species are arranged along this axis in the same successional order seen in CA and NMDS — pioneer species (Bur oak, Black oak) on the positive side and climax species (Sugar maple, Ironwood) on the negative side.
+
+## 10. Conclusion
+
+
+All three ordination methods — CA, NMDS, and CCA — consistently reveal that forest succession is the dominant factor structuring species composition in the Wisconsin Forest dataset. CA identified a single strong gradient on CA1 (62.45% of total inertia), well-aligned with the known successional sequence from pioneer to climax plots. The mild arch effect in CA (DCA axis length = 2.26 SD) was expected given the moderate-length gradient, and DCA confirmed this by providing a more linear representation. NMDS with two dimensions achieved very low stress (~0.025), recovering the same successional gradient without the arch artifact, and the Stage variable explained 94.5% of the NMDS ordination (p < 0.001). CCA directly constrained the ordination by Stage and showed that this single variable accounts for 56.54% of total inertia. Across all methods, early-successional species (Bur oak, Black oak, Shagbark hickory) consistently separate from late-successional species (Sugar maple, Ironwood, Basswood) along the primary ordination axis. Plot C appears as a consistent outlier due to its unusually high Butternut abundance. Overall, the three methods agree strongly in their conclusions, and the two-dimensional NMDS solution is arguably the most interpretable, as it avoids the arch effect of CA while providing a straightforward visualization of the successional gradient with quantified environmental overlay.Sonnet 4.6Claude is AI and can make mistakes. Please double-check responses.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+*Note*: `ChatGPT` is used for grammar correction.
+
+
+
+
+
+
+
